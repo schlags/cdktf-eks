@@ -1,4 +1,4 @@
-import { S3Backend, ITerraformDependable, Token } from 'cdktf';
+import { S3Backend, ITerraformDependable, Token, TerraformOutput } from 'cdktf';
 import { Construct } from 'constructs';
 import * as awsVpcModule from './.gen/modules/vpc';
 import { EksCluster } from '@cdktf/provider-aws/lib/eks-cluster';
@@ -7,6 +7,8 @@ import { DataAwsAvailabilityZones } from '@cdktf/provider-aws/lib/data-aws-avail
 import { IamRole } from '@cdktf/provider-aws/lib/iam-role';
 import { IamPolicyAttachment } from '@cdktf/provider-aws/lib/iam-policy-attachment';
 import { DataAwsSubnets } from '@cdktf/provider-aws/lib/data-aws-subnets';
+import { DataAwsEksClusterAuth } from '@cdktf/provider-aws/lib/data-aws-eks-cluster-auth';
+import { KubernetesProvider } from '@cdktf/provider-kubernetes/lib/provider';
 
 /** 
  * These are the property types for the cluster as a public interface.
@@ -30,7 +32,6 @@ export class Cluster extends Construct {
     readonly cluster: EksCluster;
     readonly vpc?: any;
     readonly vpcId?: string;
-    // readonly defaultNodeGroup? NodeGroup;
     private readonly region: string;
 
     constructor(scope: Construct, id: string, props: ClusterProps) {
@@ -77,6 +78,20 @@ export class Cluster extends Construct {
         if (this.vpc) {
             cluster.node.addDependency('depends_on', [this.vpc]);
         }
+
+        // Need to know why we would need a kubernetes provider defined here with the host and token
+        // It's likely because we need to create kubernetes resources in the cluster
+        // but we don't have any of those yet to create with the cdktf
+        this.createKubenetesProvider();
+
+        // Provide TerraformOutput for aws eks cluster configuration command
+
+        new TerraformOutput(this, 'AWSEKSCliCommand', {
+            value: `aws eks --region ${this.region} update-kubeconfig --name ${this.clusterName} --alias ${this.clusterName}`,
+        });
+        
+
+
     }
 
     private _createVpc() {
@@ -132,5 +147,19 @@ export class Cluster extends Construct {
             policyArn: 'arn:aws:iam::aws:policy/AmazonEKSVPCResourceController'
         });
         return role;
+    }
+
+    private createKubenetesProvider(): KubernetesProvider {
+        const clusterAuthData = new DataAwsEksClusterAuth(this, 'clusterAuth', {
+            name: this.clusterName,
+        });
+        let cert = this.cluster.certificateAuthority.get(0).data;
+        cert = `\${base64decode("${cert}")}}`
+        const k8sprovider = new KubernetesProvider(this, 'kubernetes', {
+            host: this.cluster.endpoint,
+            token: clusterAuthData.token
+        });
+        k8sprovider.addOverride('cluster_ca_certificate', cert);
+        return k8sprovider;
     }
 }
