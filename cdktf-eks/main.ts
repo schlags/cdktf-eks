@@ -2,6 +2,7 @@ import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
 import { ClusterProps, Cluster } from "./cluster";
 import { NodeGroup, NodeGroupProps } from "./nodegroup";
+import { KubernetesProvider } from "@cdktf/provider-kubernetes/lib/provider";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, id: string) {
@@ -25,6 +26,12 @@ class MyStack extends TerraformStack {
     }
 
     new NodeGroup(this, "cdktf-dylan-eks-nodegroup", nodegroupProps);
+
+    const k8sprovider: KubernetesProvider = cluster.createKubenetesProvider();
+    
+    // TODO: add k8s resources
+    //       this provider object can be used to do k8s deployments with cdktf
+    console.log(`Got k8s provider alias: ${k8sprovider.alias}`);
   }
 }
 

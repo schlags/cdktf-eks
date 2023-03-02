@@ -79,11 +79,6 @@ export class Cluster extends Construct {
             cluster.node.addDependency('depends_on', [this.vpc]);
         }
 
-        // Need to know why we would need a kubernetes provider defined here with the host and token
-        // It's likely because we need to create kubernetes resources in the cluster
-        // but we don't have any of those yet to create with the cdktf
-        this.createKubenetesProvider();
-
         // Provide TerraformOutput for aws eks cluster configuration command
 
         new TerraformOutput(this, 'AWSEKSCliCommand', {
@@ -149,7 +144,7 @@ export class Cluster extends Construct {
         return role;
     }
 
-    private createKubenetesProvider(): KubernetesProvider {
+    createKubenetesProvider(): KubernetesProvider {
         const clusterAuthData = new DataAwsEksClusterAuth(this, 'clusterAuth', {
             name: this.clusterName,
         });
@@ -157,7 +152,8 @@ export class Cluster extends Construct {
         cert = `\${base64decode("${cert}")}}`
         const k8sprovider = new KubernetesProvider(this, 'kubernetes', {
             host: this.cluster.endpoint,
-            token: clusterAuthData.token
+            token: clusterAuthData.token,
+            alias: this.clusterName
         });
         k8sprovider.addOverride('cluster_ca_certificate', cert);
         return k8sprovider;
