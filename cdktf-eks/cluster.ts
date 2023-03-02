@@ -4,9 +4,9 @@ import * as awsVpcModule from './.gen/modules/vpc';
 import { EksCluster } from '@cdktf/provider-aws/lib/eks-cluster';
 import { AwsProvider } from '@cdktf/provider-aws/lib/provider';
 import { DataAwsAvailabilityZones } from '@cdktf/provider-aws/lib/data-aws-availability-zones';
-import { DataAwsSubnetIds } from '@cdktf/provider-aws/lib/data-aws-subnet-ids';
 import { IamRole } from '@cdktf/provider-aws/lib/iam-role';
 import { IamPolicyAttachment } from '@cdktf/provider-aws/lib/iam-policy-attachment';
+import { DataAwsSubnets } from '@cdktf/provider-aws/lib/data-aws-subnets';
 
 /** 
  * These are the property types for the cluster as a public interface.
@@ -96,8 +96,11 @@ export class Cluster extends Construct {
     }
 
     private getAllSubnetsFromVpcId(vpcId: string, dependable?: ITerraformDependable[]) {
-        return new DataAwsSubnetIds(this, 'subnets', {
-            vpcId,
+        return new DataAwsSubnets(this, 'subnets', {
+            filter : [{
+                name: 'vpc-id',
+                values: [vpcId]
+            }],
             dependsOn: dependable
         })
     }
