@@ -32,6 +32,8 @@ export class Cluster extends Construct {
     readonly cluster: EksCluster;
     readonly vpc?: any;
     readonly vpcId?: string;
+    readonly awsProvider?: any;
+    readonly k8sProvider?: any;
     private readonly region: string;
 
     constructor(scope: Construct, id: string, props: ClusterProps) {
@@ -39,7 +41,7 @@ export class Cluster extends Construct {
 
         this.props = props;
         this.region = props.region ?? 'us-east-1';
-        new AwsProvider(this, 'aws', { region: this.region });
+        this.awsProvider = new AwsProvider(this, 'aws', { region: this.region });
 
         if (props.s3Backend) {
             new S3Backend(this, {
@@ -78,6 +80,23 @@ export class Cluster extends Construct {
         if (this.vpc) {
             cluster.node.addDependency('depends_on', [this.vpc]);
         }
+        
+        // create kubernetes provider
+
+        let cert = `\${base64decode(${cluster.certificateAuthority.get(0).data})}`
+
+        const clusterAuth = new DataAwsEksClusterAuth(this, 'EksClusterAuth', {
+            name: this.clusterName,
+            dependsOn: [cluster]
+        });
+
+        this.k8sProvider = new KubernetesProvider(this, 'K8sProvider', {
+            host: cluster.endpoint,
+            token: clusterAuth.token,
+            alias: this.clusterName,
+        });
+        this.k8sProvider.addOverride('cluster_ca_certificate', cert);
+        
 
         // Provide TerraformOutput for aws eks cluster configuration command
 
@@ -142,20 +161,5 @@ export class Cluster extends Construct {
             policyArn: 'arn:aws:iam::aws:policy/AmazonEKSVPCResourceController'
         });
         return role;
-    }
-
-    createKubenetesProvider(): KubernetesProvider {
-        const clusterAuthData = new DataAwsEksClusterAuth(this, 'clusterAuth', {
-            name: this.clusterName,
-        });
-        let cert = this.cluster.certificateAuthority.get(0).data;
-        cert = `\${base64decode("${cert}")}}`
-        const k8sprovider = new KubernetesProvider(this, 'kubernetes', {
-            host: this.cluster.endpoint,
-            token: clusterAuthData.token,
-            alias: this.clusterName
-        });
-        k8sprovider.addOverride('cluster_ca_certificate', cert);
-        return k8sprovider;
     }
 }
