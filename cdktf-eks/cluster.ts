@@ -10,6 +10,7 @@ import { DataAwsSubnets } from '@cdktf/provider-aws/lib/data-aws-subnets';
 import { DataAwsEksClusterAuth } from '@cdktf/provider-aws/lib/data-aws-eks-cluster-auth';
 import { KubernetesProvider } from '@cdktf/provider-kubernetes/lib/provider';
 
+
 /** 
  * These are the property types for the cluster as a public interface.
  */
@@ -116,7 +117,13 @@ export class Cluster extends Construct {
                 state: 'available',
             }).names,
             publicSubnets: ['10.143.128.0/21', '10.143.136.0/21'],
+            publicSubnetTags: {
+                'kubernetes.io/role/elb': '1'
+            },
             privateSubnets: ['10.143.144.0/21', '10.143.152.0/21'],
+            privateSubnetTags: {
+                'kubernetes.io/role/internal-elb': '1'
+            },
             singleNatGateway: true,
             enableNatGateway: true,
             oneNatGatewayPerAz: false

@@ -1,6 +1,8 @@
 import { KubernetesProvider } from "@cdktf/provider-kubernetes/lib/provider";
 import * as k8s from "@cdktf/provider-kubernetes"
+import * as helm from "@cdktf/provider-helm"
 import * as aws from "@cdktf/provider-aws"
+import * as tls from "@cdktf/provider-tls"
 import * as fs from "fs";
 import * as path from "path";
 import { Construct } from "constructs";
@@ -36,13 +38,27 @@ export class AWSLoadBalancerController extends Construct {
         const oidcArn = `arn:aws:iam::${awsIdentity.accountId}:oidc-provider/${issuerNoHttps}`;
         
 
-        new aws.eksIdentityProviderConfig.EksIdentityProviderConfig (this, 'EksIdentityProviderConfig', {
+        const idpConfig = new aws.eksIdentityProviderConfig.EksIdentityProviderConfig (this, 'EksIdentityProviderConfig', {
             clusterName: this.cluster.name,
             oidc: {
                 clientId: 'sts.amazonaws.com',
                 identityProviderConfigName: `cdktf-oidc`,
                 issuerUrl: issuerUrl,
-            }
+            },
+            dependsOn: [this.cluster]
+        });
+
+        // Now create the oidc provider in IAM with the thumbprint of the issuer url using a tls provider object
+
+        const openIdThumbprint = new tls.dataTlsCertificate.DataTlsCertificate(this, 'OpenIdThumbprint', {
+            provider: new tls.provider.TlsProvider(this, 'TlsProvider', {}),
+            url: issuerUrl
+        });
+
+        new aws.iamOpenidConnectProvider.IamOpenidConnectProvider(this, 'OidcProvider', {
+            url: issuerUrl,
+            clientIdList: ['sts.amazonaws.com'],
+            thumbprintList: [openIdThumbprint.certificates.get(0).sha1Fingerprint]
         });
 
         // Create iam policy for aws load balancer controller from ./iam-awslbc/iam-policy.json
@@ -75,7 +91,8 @@ export class AWSLoadBalancerController extends Construct {
                         }
                     },
                 ]
-            })
+            }),
+            dependsOn: [idpConfig]
         });
 
         // Attach the above policy to the above role
@@ -97,8 +114,48 @@ export class AWSLoadBalancerController extends Construct {
                 annotations: {
                     'eks.amazonaws.com/role-arn': awslbcRole.arn
                 }
-            }
+            },
+            dependsOn: [awslbcRole]
         });
+
+        // Install the eks-charts aws load balancer controller
+        const helmProvider = new helm.provider.HelmProvider(this, 'HelmProvider', {
+            kubernetes: {
+                host: this.k8sProvider.host,
+                clusterCaCertificate: this.k8sProvider.clusterCaCertificate,
+                exec: {
+                    apiVersion: 'client.authentication.k8s.io/v1beta1',
+                    args: ["eks", "get-token", "--cluster-name", this.cluster.name],
+                    command: 'aws',
+                },
+                // TODO: investigate why 509 error is thrown when using token
+                insecure: true
+            },
+        });
+
+        const AWSlbcChart = new helm.release.Release(this, 'AwsLbcRelease', {
+            provider: helmProvider,
+            name: 'aws-load-balancer-controller',
+            namespace: 'kube-system',
+            chart: 'aws-load-balancer-controller',
+            repository: 'https://aws.github.io/eks-charts',
+            set: [
+                {
+                    name: 'clusterName',
+                    value: this.cluster.name
+                },
+                {
+                    name: 'serviceAccount.create',
+                    value: 'false'
+                },
+                {
+                    name: 'serviceAccount.name',
+                    value: 'aws-load-balancer-controller'
+                }
+            ],
+            wait: true
+        });
+        AWSlbcChart.node.addDependency(idpConfig);
 
 
     }
