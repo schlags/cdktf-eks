@@ -3,8 +3,10 @@ import { App, TerraformStack } from "cdktf";
 import { ClusterProps, Cluster } from "./cluster";
 import { NodeGroup, NodeGroupProps } from "./nodegroup";
 import { AWSLoadBalancerController, AWSLoadBalancerControllerProps } from "./awslbc"
+import { ExternalDNSProps, ExternalDNS } from "./externaldns";
 // import { TwentyFortyEight } from "./k8s";
 import { KubernetesProvider } from "@cdktf/provider-kubernetes/lib/provider";
+import { AwsPcaIssuer, AwsPcaIssuerProps } from "./aws-pca-issuer";
 
 class MyStack extends TerraformStack {
   constructor(scope: Construct, id: string) {
@@ -45,6 +47,24 @@ class MyStack extends TerraformStack {
     };
 
     new AWSLoadBalancerController(this, "cdktf-dylan-eks-awslbc", awslbcProps);
+
+    const externalDNSProps: ExternalDNSProps = {
+      k8sProvider: k8sprovider,
+      cluster: cluster.cluster,
+      awsProvider: cluster.awsProvider
+    }
+
+    new ExternalDNS(this, "cdktf-dylan-eks-externaldns", externalDNSProps);
+
+    const awsPcaIssuerProps: AwsPcaIssuerProps = {
+      k8sProvider: k8sprovider,
+      cluster: cluster.cluster,
+      awsProvider: cluster.awsProvider
+    }
+
+    // Don't think we need the private cert authority for this
+    new AwsPcaIssuer(this, "cdktf-dylan-eks-awspcaissuer", awsPcaIssuerProps);
+
   }
 }
 

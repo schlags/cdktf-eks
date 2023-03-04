@@ -10,6 +10,7 @@ import { AwsProvider } from "@cdktf/provider-aws/lib/provider";
 import { EksCluster } from "@cdktf/provider-aws/lib/eks-cluster";
 import { Fn } from "cdktf";
 import { DataAwsCallerIdentity } from "@cdktf/provider-aws/lib/data-aws-caller-identity";
+import { TerraformOutput } from "cdktf";
 
 export interface AWSLoadBalancerControllerProps {
     readonly k8sProvider: KubernetesProvider;
@@ -62,7 +63,7 @@ export class AWSLoadBalancerController extends Construct {
         });
 
         // Create iam policy for aws load balancer controller from ./iam-awslbc/iam-policy.json
-        const awslbcPolicyDoc: string = fs.readFileSync(path.join(__dirname, 'iam-awslbc/iam-policy.json'), { encoding: 'utf-8' });
+        const awslbcPolicyDoc: string = fs.readFileSync(path.join(__dirname, 'iam-policy-docs/alb-controller-policy.json'), { encoding: 'utf-8' });
         const awslbcPolicy: aws.iamPolicy.IamPolicy = new aws.iamPolicy.IamPolicy(this, 'AwsLbcPolicy', {
             name: `${this.cluster.name}-awslbc-policy`,
             policy: awslbcPolicyDoc
@@ -156,6 +157,20 @@ export class AWSLoadBalancerController extends Construct {
             wait: true
         });
         AWSlbcChart.node.addDependency(idpConfig);
+
+        const acmCert = new aws.acmCertificate.AcmCertificate(this, 'PcaIssuerCertificate', {
+            domainName: 'dsurecorder.dylanschlager.com',
+            subjectAlternativeNames: ['*.dsurecorder.dylanschlager.com'],
+            validationMethod: 'DNS',
+            tags: {
+                'Name': 'dsurecorder.dylanschlager.com'
+            }
+        });
+
+        new TerraformOutput(this, 'PcaIssuerCertificateArn', {
+            value: acmCert.arn
+        });
+
 
 
     }
