@@ -48,8 +48,8 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:512132392002:certificate/57c460d0-100c-4dc9-9aa8-2162385b00b6
-    external-dns.alpha.kubernetes.io/hostname: game.dsurecorder.dylanschlager.com
+    alb.ingress.kubernetes.io/certificate-arn: UPDATE_ME
+    external-dns.alpha.kubernetes.io/hostname: game.cdktf.dylanschlager.com
 spec:
   ingressClassName: alb
   rules:

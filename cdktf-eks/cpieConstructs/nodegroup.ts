@@ -31,6 +31,7 @@ export interface NodeGroupBaseProps {
 export interface NodeGroupProps extends NodeGroupBaseProps {
     readonly clusterName: string;
     readonly subnets: string[];
+    readonly tags?: { [key: string]: string };
 }
 
 export class NodeGroup extends Construct {
@@ -39,6 +40,7 @@ export class NodeGroup extends Construct {
     private readonly desiredCapacity: number;
     private readonly maxCapacity: number;
     private readonly clusterName: string;
+    private readonly tags: { [key: string]: string };
     constructor(scope: Construct, id: string, props: NodeGroupProps) {
         super(scope, id);
 
@@ -49,6 +51,8 @@ export class NodeGroup extends Construct {
         this.maxCapacity = props.nodeScalingConfig?.maxCapacity ?? (this.desiredCapacity > 0) ? this.desiredCapacity : 1;
 
         this.nodeGroupIAMRole = props.nodeIAMRole ?? this._createNodeGroupIAMRole().arn;
+
+        this.tags = props.tags ?? {};
         
 
         new EksNodeGroup(this, 'NodeGroup', {
@@ -64,6 +68,7 @@ export class NodeGroup extends Construct {
             capacityType: props.nodeCapacityType ?? NodeCapacityType.ON_DEMAND,
             instanceTypes: props.instanceTypes ?? ['t3.medium'],
             dependsOn: props.dependsOn,
+            tags: this.tags,
         })
 
     }
@@ -83,6 +88,7 @@ export class NodeGroup extends Construct {
                     },
                 ]
             }),
+            tags: this.tags,
         });
         new IamPolicyAttachment(this, 'AmazonEksWorkerNodePolicyAttachment', {
             name: `${this.clusterName}-AmazonEksWorkerNodePolicy-Attachment`,

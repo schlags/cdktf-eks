@@ -1,21 +1,86 @@
 import { Construct } from "constructs";
 import { App, TerraformStack } from "cdktf";
-import { ClusterProps, Cluster } from "./cluster";
-import { NodeGroup, NodeGroupProps } from "./nodegroup";
-import { AWSLoadBalancerController, AWSLoadBalancerControllerProps } from "./awslbc"
-import { ExternalDNSProps, ExternalDNS } from "./externaldns";
-// import { TwentyFortyEight } from "./k8s";
+import { ClusterProps, Cluster } from "./cpieConstructs/cluster";
+import { NodeGroup, NodeGroupProps } from "./cpieConstructs/nodegroup";
+import { AWSLoadBalancerController, AWSLoadBalancerControllerProps } from "./cpieConstructs/awslbc"
+import { ExternalDNSProps, ExternalDNS } from "./cpieConstructs/externaldns";
+import { AcmCertAndValidate } from "./cpieConstructs/acmCertAndValidate";
 import { KubernetesProvider } from "@cdktf/provider-kubernetes/lib/provider";
-import { AwsPcaIssuer, AwsPcaIssuerProps } from "./aws-pca-issuer";
+import { AwsProvider } from "@cdktf/provider-aws/lib/provider";
+import { HelmProvider } from "@cdktf/provider-helm/lib/provider";
 
-class MyStack extends TerraformStack {
+// Uncomment when ready for game deployment
+import { Game, GameProps } from "./cpieConstructs/deployments/game";
+import { TlsProvider } from "@cdktf/provider-tls/lib/provider";
+import { GitHubActionsOIDC } from "./cpieConstructs/ghActionsOIDC";
+
+
+class CPIEEksStack extends TerraformStack {
   constructor(scope: Construct, id: string) {
     super(scope, id);
 
+    // --------------------------------------------------------------------------
+    // 
+    // Constants
+    // 
+    // --------------------------------------------------------------------------
+
+    // Default tags for all resources
+    const tags = {
+      "Service": "cdktf-eks-demo",
+      "Environment": "sandbox",
+      "Subservice": "cdktf-demo-game-2048"
+    }
+
+    // --------------------------------------------------------------------------
+    // 
+    // Providers
+    // 
+    // --------------------------------------------------------------------------
+
+    const awsProvider = new AwsProvider(this, "awsProvider", {
+      region: "us-east-1"
+    })
+
+    const tlsProvider = new TlsProvider(this, "mainTlsProvider", {
+      alias: "mainTlsProvider"
+    });
+
+    // --------------------------------------------------------------------------
+    // 
+    // Constructs
+    // 
+    // --------------------------------------------------------------------------
+
+    // OIDC Provider for GitHub Actions
+
+    new GitHubActionsOIDC(this, "cdktf-dylan-eks-ghactions-oidc", {
+      awsProvider: awsProvider,
+      tlsProvider: tlsProvider,
+      githubRepositoryDetails: {
+        owner: "Schlags",
+        name: "cdktf-eks"
+      },
+      tags: tags
+    });
+
+    // ACM Certificate
+
+    const acmCertValidatation: AcmCertAndValidate = new AcmCertAndValidate(this, "cdktf-dylan-eks-acmcert", {
+      awsProvider: awsProvider,
+      domainPath: "cdktf.dylanschlager.com",
+    });
+
+
+    // EKS Cluster and Node Groups
     const clusterProps: ClusterProps = {
       region: "us-east-1",
       clusterName: "cdktf-dylan-eks-cluster",
       s3Backend: true,
+      s3Bucket: "cdktf-dylan-eks-cluster-cdktf",
+      s3Key: "cdktf-dylan-eks-cluster.tfstate",
+      awsProvider: awsProvider,
+      tags: tags
     }
 
     const cluster = new Cluster(this, "cdktf-dylan-eks-cluster", clusterProps);
@@ -26,24 +91,39 @@ class MyStack extends TerraformStack {
       dependsOn: [cluster.cluster],
       nodeScalingConfig: {
         desiredCapacity: 1,
-      }
+      },
+      tags: tags
     }
 
     new NodeGroup(this, "cdktf-dylan-eks-nodegroup", nodegroupProps);
 
+    // Define k8s provider created in Cluster construct as constant to be used in other constructs
     const k8sprovider: KubernetesProvider = cluster.k8sProvider as KubernetesProvider;
     console.log(`Got k8s provider alias: ${k8sprovider.alias}`);
 
-    // new Kubernetes(this, "cdktf-dylan-eks-k8s", {
-    //   provider: k8sprovider,
-    //   clusterName: cluster.clusterName,
-    //   createDeployment: true
-    // });
+    // Define helm provider from k8s provider
+    const helmProvider = new HelmProvider(this, 'HelmProvider', {
+        kubernetes: {
+            host: k8sprovider.host,
+            clusterCaCertificate: k8sprovider.clusterCaCertificate,
+            exec: {
+                apiVersion: 'client.authentication.k8s.io/v1beta1',
+                args: ["eks", "get-token", "--cluster-name", cluster.cluster.name],
+                command: 'aws',
+            },
+            // TODO: investigate why 509 error is thrown when using token
+            insecure: true
+        },
+    });
 
+    // AWS Load Balancer Controller and External DNS
     const awslbcProps: AWSLoadBalancerControllerProps = {
       k8sProvider: k8sprovider,
+      helmProvider: helmProvider,
       cluster: cluster.cluster,
-      awsProvider: cluster.awsProvider
+      awsProvider: cluster.awsProvider,
+      domainPath: acmCertValidatation.domainPath,
+      tags: tags
     };
 
     new AWSLoadBalancerController(this, "cdktf-dylan-eks-awslbc", awslbcProps);
@@ -51,23 +131,25 @@ class MyStack extends TerraformStack {
     const externalDNSProps: ExternalDNSProps = {
       k8sProvider: k8sprovider,
       cluster: cluster.cluster,
-      awsProvider: cluster.awsProvider
+      awsProvider: cluster.awsProvider,
+      hostedZoneName: acmCertValidatation.domainPath,
+      tags: tags
     }
 
     new ExternalDNS(this, "cdktf-dylan-eks-externaldns", externalDNSProps);
 
-    const awsPcaIssuerProps: AwsPcaIssuerProps = {
+
+    // Put game definition here!
+    const gameProps: GameProps = {
       k8sProvider: k8sprovider,
-      cluster: cluster.cluster,
-      awsProvider: cluster.awsProvider
+      domainPath: `${acmCertValidatation.domainPath}`,
+      subdomain: 'game',
+      certificateArn: acmCertValidatation.acmCertificate.arn
     }
-
-    // Don't think we need the private cert authority for this
-    new AwsPcaIssuer(this, "cdktf-dylan-eks-awspcaissuer", awsPcaIssuerProps);
-
+    new Game(this, "cdktf-dylan-eks-game", gameProps);
   }
 }
 
 const app = new App();
-new MyStack(app, "cdktf-eks");
+new CPIEEksStack(app, "cdktf-eks");
 app.synth();

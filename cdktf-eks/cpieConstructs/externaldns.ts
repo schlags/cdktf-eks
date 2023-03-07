@@ -2,99 +2,61 @@ import { EksCluster } from "@cdktf/provider-aws/lib/eks-cluster";
 import { AwsProvider } from "@cdktf/provider-aws/lib/provider";
 import { KubernetesProvider } from "@cdktf/provider-kubernetes/lib/provider";
 import { Construct } from "constructs";
-import { Fn } from "cdktf";
-import * as fs from 'fs';
-import * as path from 'path';
 import * as aws from "@cdktf/provider-aws"
 import * as k8s from "@cdktf/provider-kubernetes"
-import { DataAwsCallerIdentity } from "@cdktf/provider-aws/lib/data-aws-caller-identity";
+import { K8sIAMServiceAccount } from './k8sIAMServiceAccount'
 
 
 export interface ExternalDNSProps {
     readonly k8sProvider: KubernetesProvider;
     readonly awsProvider: AwsProvider;
     readonly cluster: EksCluster;
+    readonly hostedZoneName?: string;
+    readonly namespace?: string;
+    readonly tags?: {[key: string]: string};
 }
 
 export class ExternalDNS extends Construct {
     readonly k8sProvider: KubernetesProvider;
     readonly awsProvider: AwsProvider;
     readonly cluster: EksCluster;
+    readonly hostedZoneName: string;
+    readonly namespace: string;
+    readonly tags: {[key: string]: string};
     constructor(scope: Construct, id: string, props: ExternalDNSProps) {
         super(scope, id);
         this.k8sProvider = props.k8sProvider;
         this.awsProvider = props.awsProvider;
         this.cluster = props.cluster;
 
-        // TODO: put eks iam service account creation into a separate construct
+        if (!props.hostedZoneName) {
+            this.hostedZoneName = 'example.com';
+        } else {
+            this.hostedZoneName = props.hostedZoneName;
+        }
 
-        // Create variables for OIDC provider urls (with and without https:// and in arn format)
+        this.namespace = props.namespace ?? 'default';
 
-        const awsIdentity = new DataAwsCallerIdentity(this, 'AwsIdentity', {
-            provider: this.awsProvider
-        });
-        // const issuerUrl: string = this.cluster.identity.get(0).oidc.get(0).issuer;
-        const issuerNoHttps = Fn.replace(this.cluster.identity.get(0).oidc.get(0).issuer, 'https://', '');
-        const oidcArn = `arn:aws:iam::${awsIdentity.accountId}:oidc-provider/${issuerNoHttps}`;
+        // set tags
+        this.tags = props.tags ?? {};
 
-        // Create the IAM service account for external dns
-        // Step 1: Create the IAM policy (document and policy itself)
 
-        const externalDNSPolicyDoc: string = fs.readFileSync(path.join(__dirname, 'iam-policy-docs/externaldns-policy.json'), 'utf8');
-        const externalDNSPolicy = new aws.iamPolicy.IamPolicy(this, 'ExternalDNSPolicy', {
-            name: `${this.cluster.name}-externaldns-policy`,
-            description: `IAM policy for ExternalDNS service account in ${this.cluster.name} EKS cluster`,
-            policy: externalDNSPolicyDoc
-        });
+        // Step 1: Create k8sIAMServiceAccount for external dns
 
-        // Step 2: Create the IAM role
-
-        const externalDNSRole = new aws.iamRole.IamRole(this, 'ExternalDNSRole', {
-            name: `${this.cluster.name}-externaldns-role`,
-            description: `IAM role for ExternalDNS service account in ${this.cluster.name} EKS cluster`,
-            assumeRolePolicy: JSON.stringify({
-                Version: '2012-10-17',
-                Statement: [
-                    {
-                        Action: 'sts:AssumeRoleWithWebIdentity',
-                        Effect: 'Allow',
-                        Principal: {
-                            Federated: oidcArn,
-                        },
-                        Condition: {
-                            StringEquals: {
-                                [`${issuerNoHttps}:aud`]: 'sts.amazonaws.com',
-                                [`${issuerNoHttps}:sub`]: 'system:serviceaccount:default:external-dns',
-                            }
-                        }
-                    },
-                ]
-            }),
-            dependsOn: []
+        const externalDnsServiceAccount = new K8sIAMServiceAccount(this, 'AwsLbcServiceAccount', {
+            k8sProvider: this.k8sProvider,
+            awsProvider: this.awsProvider,
+            cluster: this.cluster,
+            tags: this.tags,
+            name: 'external-dns',
+            namespace: this.namespace,
+            iamPolicyFileProps: {
+                policyDocFileLocation: 'iam-policy-docs',
+                policyDocFileName: 'externaldns-policy.json'
+            }
         });
 
-        // Step 3: Attach the IAM policy to the IAM role
-
-        new aws.iamRolePolicyAttachment.IamRolePolicyAttachment(this, 'ExternalDNSRolePolicyAttachment', {
-            role: externalDNSRole.name,
-            policyArn: externalDNSPolicy.arn
-        });
-
-        // Step 4: Create the Service Account in the Kubernetes cluster
-        
-        new k8s.serviceAccount.ServiceAccount(this, 'AwsLbcServiceAccount', {
-            provider: this.k8sProvider,
-            metadata: {
-                name: 'external-dns',
-                namespace: 'default',
-                annotations: {
-                    'eks.amazonaws.com/role-arn': externalDNSRole.arn
-                }
-            },
-            dependsOn: [externalDNSRole]
-        });
-
-        // Step 5: Deploy ExternalDNS
+        // Step 2: Deploy ExternalDNS
 
         new k8s.clusterRole.ClusterRole(this, 'ExternalDNSClusterRole', {
             provider: this.k8sProvider,
@@ -117,7 +79,8 @@ export class ExternalDNS extends Construct {
                     resources: ['nodes'],
                     verbs: ['list', 'watch'],
                 }
-            ]
+            ],
+            dependsOn: externalDnsServiceAccount.dependables
         });
 
         new k8s.clusterRoleBinding.ClusterRoleBinding(this, 'ExternalDNSClusterRoleBinding', {
@@ -133,14 +96,15 @@ export class ExternalDNS extends Construct {
             subject: [
                 {
                     kind: 'ServiceAccount',
-                    name: 'external-dns',
-                    namespace: 'default',
+                    name: externalDnsServiceAccount.name,
+                    namespace: this.namespace,
                 }
-            ]
+            ],
+            dependsOn: externalDnsServiceAccount.dependables
         });
 
         const hostedZone = new aws.dataAwsRoute53Zone.DataAwsRoute53Zone(this, 'HostedZone', {
-            name: 'dsurecorder.dylanschlager.com',
+            name: this.hostedZoneName,
             provider: this.awsProvider
         });
 
@@ -148,7 +112,7 @@ export class ExternalDNS extends Construct {
             provider: this.k8sProvider,
             metadata: {
                 name: 'external-dns',
-                namespace: 'default',
+                namespace: this.namespace,
             },
             spec: {
                 strategy: {
@@ -166,7 +130,7 @@ export class ExternalDNS extends Construct {
                         },
                     },
                     spec: {
-                        serviceAccountName: 'external-dns',
+                        serviceAccountName: externalDnsServiceAccount.name,
                         container: [
                             {
                                 name: 'external-dns',
@@ -174,7 +138,7 @@ export class ExternalDNS extends Construct {
                                 args: [
                                     '--source=service',
                                     '--source=ingress',
-                                    '--domain-filter=dsurecorder.dylanschlager.com', // will make ExternalDNS see only the hosted zones matching provided domain, omit to process all available hosted zones
+                                    `--domain-filter=${this.hostedZoneName}`, // will make ExternalDNS see only the hosted zones matching provided domain, omit to process all available hosted zones
                                     '--provider=aws',
                                     '--policy=upsert-only', // would prevent ExternalDNS from deleting any records, omit to enable full synchronization
                                     '--aws-zone-type=public', // only look at public hosted zones (valid values are public, private or no value for both)
@@ -188,10 +152,9 @@ export class ExternalDNS extends Construct {
                         }
                     }
                 }
-            }
+            },
+            dependsOn: externalDnsServiceAccount.dependables
         });
-
-
 
     }
 }

@@ -1,6 +1,6 @@
 import { S3Backend, ITerraformDependable, Token, TerraformOutput } from 'cdktf';
 import { Construct } from 'constructs';
-import * as awsVpcModule from './.gen/modules/vpc';
+import * as awsVpcModule from '../.gen/modules/vpc';
 import { EksCluster } from '@cdktf/provider-aws/lib/eks-cluster';
 import { AwsProvider } from '@cdktf/provider-aws/lib/provider';
 import { DataAwsAvailabilityZones } from '@cdktf/provider-aws/lib/data-aws-availability-zones';
@@ -23,6 +23,8 @@ export interface ClusterProps {
     readonly s3Backend?: boolean;
     readonly s3Bucket?: string;
     readonly s3Key?: string;
+    readonly awsProvider?: AwsProvider;
+    readonly tags?: { [key: string]: string };
 }
 
 export class Cluster extends Construct {
@@ -36,13 +38,22 @@ export class Cluster extends Construct {
     readonly awsProvider?: any;
     readonly k8sProvider?: any;
     private readonly region: string;
+    readonly tags: { [key: string]: string };
 
     constructor(scope: Construct, id: string, props: ClusterProps) {
         super(scope, id);
 
         this.props = props;
         this.region = props.region ?? 'us-east-1';
-        this.awsProvider = new AwsProvider(this, 'aws', { region: this.region });
+
+        // set tags
+        this.tags = props.tags ?? {};
+
+        if (props.awsProvider) {
+            this.awsProvider = props.awsProvider;
+        } else {
+            this.awsProvider = new AwsProvider(this, 'aws', { region: this.region });
+        }
 
         if (props.s3Backend) {
             new S3Backend(this, {
@@ -74,6 +85,7 @@ export class Cluster extends Construct {
                     this.privateSubnets.concat(this.publicSubnets)
             },
             roleArn: this._createClusterRole().arn,
+            tags: this.tags
         });
         this.cluster = cluster;
 
@@ -126,7 +138,8 @@ export class Cluster extends Construct {
             },
             singleNatGateway: true,
             enableNatGateway: true,
-            oneNatGatewayPerAz: false
+            oneNatGatewayPerAz: false,
+            tags: this.tags
         });
         return vpc;
     }
@@ -155,7 +168,8 @@ export class Cluster extends Construct {
                         }
                     }
                 ]
-            })
+            }),
+            tags: this.tags
         });
         new IamPolicyAttachment(this, 'EksClusterPolicyAttachment', {
             name: `${this.clusterName}-policy-attachment`,

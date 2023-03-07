@@ -7,7 +7,7 @@ import { Construct } from "constructs";
 // import * as path from 'path';
 // import * as aws from "@cdktf/provider-aws"
 // import * as k8s from "@cdktf/provider-kubernetes"
-import * as helm from "@cdktf/provider-helm"
+// import * as helm from "@cdktf/provider-helm"
 // import { DataAwsCallerIdentity } from "@cdktf/provider-aws/lib/data-aws-caller-identity";
 
 export interface AwsPcaIssuerProps {
@@ -102,20 +102,20 @@ export class AwsPcaIssuer extends Construct {
 
         // Install the PCA Issuer Helm chart
         // STEP 1: Create the Helm provider
-        new helm.provider.HelmProvider(this, 'HelmProvider', {
-            alias: 'pca-helm-provider',
-            kubernetes: {
-                host: this.k8sProvider.host,
-                clusterCaCertificate: this.k8sProvider.clusterCaCertificate,
-                exec: {
-                    apiVersion: 'client.authentication.k8s.io/v1beta1',
-                    args: ["eks", "get-token", "--cluster-name", this.cluster.name],
-                    command: 'aws',
-                },
-                // TODO: investigate why 509 error is thrown when using token
-                insecure: true
-            },
-        });
+        // new helm.provider.HelmProvider(this, 'HelmProvider', {
+        //     alias: 'pca-helm-provider',
+        //     kubernetes: {
+        //         host: this.k8sProvider.host,
+        //         clusterCaCertificate: this.k8sProvider.clusterCaCertificate,
+        //         exec: {
+        //             apiVersion: 'client.authentication.k8s.io/v1beta1',
+        //             args: ["eks", "get-token", "--cluster-name", this.cluster.name],
+        //             command: 'aws',
+        //         },
+        //         // TODO: investigate why 509 error is thrown when using token
+        //         insecure: true
+        //     },
+        // });
 
     //     // STEP 2: Create the Helm release
     //     new helm.release.Release(this, 'PcaIssuerHelmRelease', {
